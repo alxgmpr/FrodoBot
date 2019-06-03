@@ -15,7 +15,7 @@ require('console-stamp')(console, {
     }
 });
 
-process.env.NODE_TLS_REJECT_UNAUTHORIZED='1';
+process.env.NODE_TLS_REJECT_UNAUTHORIZED='0';
 
 // TODO: write env check to turn on and off tls reject
 //  - better error handling function for requests (403, 429, 5XX)
@@ -303,7 +303,7 @@ class Worker {
         console.log('Finding existing basket for user');
         await this.prolific_transport.request({
             method: 'get',
-            url: '/' + this.customer_id + '/basketId'
+            url: 'users/' + this.customer_id + '/basketId'
         })
             .then((res) => {
                 console.log('Found existing basket id ' + res.data.basketId);

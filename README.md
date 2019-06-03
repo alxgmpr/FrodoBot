@@ -31,6 +31,7 @@ Notes:
 * Shipping address == billing address.
 * Cards supported: `Visa` and `Master Card`. Amex coming later.
 * PerimeterX tokens last 10 minutes. I wouldnt start the bot more than 10 minutes out as if the token expires, it will take some time to replace.
+* Note that Prolific cart tokens (nonce) **last 5 minutes**. If using a release mode (2) pre fetches a cart nonce, dont start more than 5 minutes before release.
 * Drop times are 24 hour, in the local timezone that the script is being ran.
 
 

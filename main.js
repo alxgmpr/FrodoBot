@@ -1,11 +1,9 @@
-'use strict';
-
 const Worker = require('./worker.js');
 const profiles = require('./profiles.js');
 
-let workers = [];
+const workers = [];
 profiles.forEach((profile) => {
-    let w = new Worker(profile);
-    w.run();
-    workers.push(w);
+  const w = new Worker(profile);
+  w.run();
+  workers.push(w);
 });
