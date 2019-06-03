@@ -15,7 +15,7 @@ require('console-stamp')(console, {
     }
 });
 
-process.env.NODE_TLS_REJECT_UNAUTHORIZED='0';
+process.env.NODE_TLS_REJECT_UNAUTHORIZED='1';
 
 // TODO: write env check to turn on and off tls reject
 //  - better error handling function for requests (403, 429, 5XX)
@@ -26,16 +26,13 @@ class Worker {
         this.uuid = uuidv4();
         this.profile = profile;
 
-        this.agent = new httpsProxyAgent('http://localhost:8888');
         this.mobile_user_agent = 'Hibbett/3.9.0 (com.hibbett.hibbett-sports; build:4558; iOS 12.2.0) Alamofire/4.5.1';
 
         this.app_version = '3.9.0';
         this.api_key = '0PutYAUfHz8ozEeqTFlF014LMJji6Rsc8bpRBGB0';
 
-
-        this.prolific_transport = axios.create({
+        let axios_options = {
             baseURL: "https://hibbett-mobileapi.prolific.io/",
-            //httpsAgent: this.agent,
             headers: {
                 'user-agent': this.mobile_user_agent,
                 'accept-language': 'en-US;q=1.0',
@@ -48,7 +45,13 @@ class Worker {
             },
             withCredentials: true,
 
-        });
+        };
+
+        if (this.profile.proxy !== '' && this.profile.proxy) {
+            axios_options.httpsAgent = new httpsProxyAgent('http://' + this.profile.proxy)
+        }
+
+        this.prolific_transport = axios.create(axios_options);
         // Custom error handling for 403 blocking and 5xx server downtime
         this.prolific_transport.interceptors.response.use(null, async (error) => {
             if (error.config && error.response && error.response.status === 403) {
@@ -76,6 +79,7 @@ class Worker {
         });
 
         this.mode = this.profile.mode;
+        this.drop_time = this.profile.drop_time;
 
         this.customer_id = null;
         this.session_id = null;
@@ -115,7 +119,7 @@ class Worker {
     }
 
     /*
-    get_new_px() - uses puppeteer to grab cookies via a headless browwser
+    get_new_px() - uses puppeteer to grab cookies via a headless browser
      */
     async get_new_px() {
         // TODO: set a 10minute timer here to renew the auth key every now and then
@@ -125,11 +129,17 @@ class Worker {
         //  - add page scroll movement/activity
         try {
             console.log('PX: Starting');
-            //console.log('PX: Launching browser');
-            const browser = await puppeteer.launch({
+
+            let pptr_config = {
                 headless: true,
                 ignoreHTTPSErrors: true
-            });
+            };
+
+            if (this.profile.proxy && this.profile.proxy !== '') {
+                pptr_config.args = ['--proxy-server=' + this.profile.proxy];
+            }
+
+            const browser = await puppeteer.launch(pptr_config);
             //console.log('PX: Preparing browser');
             const context = await browser.createIncognitoBrowserContext();
             const page = await context.newPage();
@@ -191,9 +201,12 @@ class Worker {
                 console.log('Setting guest authorization header');
                 this.session_id = res.data.sessionId;
                 this.prolific_transport.defaults.headers['authorization'] = 'Bearer ' + res.data.sessionId;
-                return this.session_id
+                return Promise.resolve(this.session_id);
             })
-            .catch((e) => {console.error(e)});
+            .catch((e) => {
+                console.error(e);
+                return Promise.reject(e);
+            });
     }
 
     async login() {
@@ -210,11 +223,19 @@ class Worker {
                 console.log('Setting user authorization header');
                 this.session_id = res.data.sessionId;
                 this.prolific_transport.defaults.headers['authorization'] = 'Bearer ' + res.data.sessionId;
-                console.log('Setting customer id' + res.data.customerId);
+                console.log('Setting customer id ' + res.data.customerId);
                 this.customer_id = res.data.customerId;
-                return this.session_id;
+                return Promise.resolve();
             })
-            .catch((e) => {console.error(e)});
+            .catch((e) => {
+                if (e.response && e.response.status === 401) {
+                    console.error('Bad login');
+                    return Promise.reject();
+                } else {
+                    console.error(e);
+                    return Promise.reject();
+                }
+            });
     }
 
     /*
@@ -229,12 +250,15 @@ class Worker {
                 url: '/users/logout',
             });
             if (response.data.success === true) {
-                console.log('Successfully logged out')
+                console.log('Successfully logged out');
+                return Promise.resolve();
             } else {
-                console.log('Logout response unsuccessful')
+                console.log('Logout response unsuccessful');
+                return Promise.reject();
             }
         } catch (e) {
             console.error(e);
+            return Promise.reject(e);
         }
     }
 
@@ -246,32 +270,35 @@ class Worker {
         })
             .then((res) => {
                 this.pids = res.data.skus;
-                return this.pids;
+                return Promise.resolve(this.pids);
             })
-            .catch((e) => {console.error(e);})
+            .catch((e) => {
+                console.error(e);
+                return Promise.reject(e);
+            })
     }
 
     async select_pid() {
         console.log('Selecting sku based on target size ' + this.target_size);
         if (!this.pids) {
             console.error('Cant select a size from empty list of pids');
-            return null;
+            return Promise.reject();
         }
         try {
             let selected = this.pids.filter((pid) => pid.size === this.target_size)[0];
             this.sel_pid = selected.id;
             console.log('Selected ' + selected.id + ' for size ' + this.target_size);
-            return selected;
+            return Promise.resolve(selected);
         } catch(e) {
             console.error(e);
-            return null;
+            return Promise.reject();
         }
     }
 
     async get_basket_id_for_user() {
         if (!this.customer_id) {
             console.error('Cant find a basket id without customer id');
-            return null;
+            return Promise.reject();
         }
         console.log('Finding existing basket for user');
         await this.prolific_transport.request({
@@ -281,9 +308,12 @@ class Worker {
             .then((res) => {
                 console.log('Found existing basket id ' + res.data.basketId);
                 this.basket_id = res.data.basketId;
-                return this.basket_id;
+                return Promise.resolve(this.basket_id);
             })
-            .catch((e) => {console.error(e)});
+            .catch((e) => {
+                console.error(e);
+                return Promise.reject(e);
+            });
     }
 
     async create_new_basket() {
@@ -295,15 +325,18 @@ class Worker {
             .then((res) => {
                 this.basket_id = res.data.basketId;
                 console.log('Got a new basket id ' + this.basket_id);
-                return this.basket_id;
+                return Promise.resolve(this.basket_id);
             })
-            .catch((e) => console.log(e));
+            .catch((e) => {
+                console.log(e);
+                return Promise.reject(e);
+            });
     }
 
     async add_to_cart() {
         if (!this.sel_pid || !this.basket_id) {
             console.error('Cant atc, missing pid or basket id');
-            return null;
+            return Promise.reject();
         }
         console.log('Adding to cart');
         await this.prolific_transport.request({
@@ -326,15 +359,18 @@ class Worker {
             .then((res) => {
                 console.log('Added ' + this.sel_pid + ' to cart');
                 this.product_id = res.data.cartItems[0].id;
-                return this.product_id
+                return Promise.resolve(this.product_id);
             })
-            .catch((e) => console.error(e));
+            .catch((e) => {
+                console.error(e);
+                return Promise.reject(e);
+            });
     }
 
     async get_cart_nonce() {
         if (!this.basket_id) {
             console.error('Cant get cart nonce for null basket id');
-            return null;
+            return Promise.reject();
         }
         console.log('Getting cart nonce');
         await this.prolific_transport.request({
@@ -347,9 +383,12 @@ class Worker {
             .then((res) => {
                 console.log('Got cart nonce');
                 this.basket_nonce = res.data.nonce;
-                return this.basket_nonce
+                return Promise.resolve(this.basket_nonce);
             })
-            .catch((e) => {console.error(e)});
+            .catch((e) => {
+                console.error(e);
+                return Promise.reject(e);
+            });
     }
 
     async add_email() {
@@ -363,9 +402,12 @@ class Worker {
         })
             .then(() => {
                 console.log('Successfully added email');
-                return true;
+                return Promise.resolve();
             })
-            .catch((e) => console.error(e));
+            .catch((e) => {
+                console.error(e);
+                Promise.reject(e);
+            });
     }
 
     async add_shipping_address() {
@@ -391,9 +433,12 @@ class Worker {
         })
             .then(() => {
                 console.log('Successfully added shipping address');
-                return true;
+                return Promise.resolve();
             })
-            .catch((e) => console.error(e));
+            .catch((e) => {
+                console.error(e);
+                return Promise.reject(e);
+            });
     }
 
     async add_shipping_method() {
@@ -409,9 +454,12 @@ class Worker {
                 console.log('Successfully added shipping method');
                 this.basket_total = res.data.total;
                 console.log('Cart total $' + this.basket_total);
-                return this.basket_total
+                return Promise.resolve(this.basket_total);
             })
-            .catch((e) => console.error(e));
+            .catch((e) => {
+                console.error(e);
+                return Promise.reject(e);
+            });
     }
 
     async tokenize_cc_num() {
@@ -429,9 +477,12 @@ class Worker {
             .then((res) => {
                 console.log('Successfully tokenized cc number');
                 this.cc_token = res.data.account_token;
-                return this.cc_token;
+                return Promise.resolve(this.cc_token);
             })
-            .catch((e) => console.error(e));
+            .catch((e) => {
+                console.error(e);
+                return Promise.reject(e);
+            });
     }
 
     async encrypt_cc_cvv() {
@@ -451,9 +502,13 @@ class Worker {
                 console.log('Successfully encrypted credit card');
                 this.encrypted_cc = res.data.encryptedPaymentAccountNumber;
                 this.encrypted_cvv = res.data.encryptedCardSecurityCode;
-                return true;
+                return Promise.resolve(this.encrypted_cvv);
+
             })
-            .catch((e) => console.error(e));
+            .catch((e) => {
+                console.error(e);
+                return Promise.reject(e);
+            });
     }
 
     async add_payment_method() {
@@ -477,11 +532,11 @@ class Worker {
         })
             .then(() => {
                 console.log('Successfully added payment method');
-                return true;
+                return Promise.resolve();
             })
             .catch((e) => {
                 console.error(e);
-                return false;
+                return Promise.reject(e);
             });
     }
 
@@ -500,7 +555,7 @@ class Worker {
             .then((res) => {
                 console.log('Submitted order');
                 console.log(res.data);
-                return true;
+                return Promise.resolve();
             })
             .catch((e) => {
                 if (e.response) {
@@ -510,40 +565,146 @@ class Worker {
                         console.error(e)
                     }
                 }
-                return false;
+                return Promise.reject(e);
             })
+    }
+
+    async wait_for_drop() {
+        console.log('Waiting for drop time ' + this.profile.drop_time);
+        let drop_time = new Date(this.profile.drop_time);
+        return new Promise(resolve => {
+            setInterval(() => {
+                let delta = drop_time.getTime() - new Date().getTime();
+                if (delta <= 0) {
+                    resolve()
+                }
+            }, 1000)
+        })
     }
 
     async run() {
         console.time(this.uuid);
+        try {
+            switch(this.mode) {
+                case 1:
+                    // TODO: work on the order of therse methods in mode 1
+                    console.log('Worker ' + this.uuid + ' running in ' + chalk.green('guest mode'));
+                    await this.guest_login()
+                        .catch(() => {
+                            throw new Error('Unable to guest login');
+                        });
+                    await this.create_new_basket()
+                        .catch(() => {
+                            throw new Error('Unable to create new basket');
+                        });
+                    await this.get_pids()
+                        .catch(() => {
+                            throw new Error('Unable to get pids');
+                        });
+                    await this.select_pid()
+                        .catch(() => {
+                            throw new Error('Unable to select pid');
+                        });
+                    await this.add_email()
+                        .catch(() => {
+                            throw new Error('Unable to add email');
+                        });
+                    await this.add_shipping_address()
+                        .catch(() => {
+                            throw new Error('Unable to add shipping address');
+                        });
+                    await this.wait_for_drop()
+                        .catch(() => {
+                            throw new Error('Unable to wait for drop time');
+                        });
+                    await this.add_to_cart()
+                        .catch(() => {
+                            throw new Error('Unable to add to cart');
+                        });
 
-        switch(this.mode) {
-            case 1:
-                console.log('Worker ' + this.uuid + ' running in ' + chalk.green('guest mode'));
-                await this.guest_login();
-                await this.create_new_basket();
-                await this.get_pids();
-                await this.select_pid();
-                await this.add_email();
-                await this.add_shipping_address();
-                await this.add_shipping_method();
-                await this.get_cart_nonce();
-                await this.tokenize_cc_num();
-                await this.encrypt_cc_cvv();
-                await this.add_payment_method();
-                await this.submit_order();
-                break;
-            case 2:
-                console.log('Worker ' + this.uuid + ' running in ' + chalk.green('login release mode'));
-                console.error(chalk.red('NOT IMPLEMENTED'));
-                break;
-            case 3:
-                console.log('Worker ' + this.uuid + ' running in ' + chalk.green('restock mode'));
-                console.error(chalk.red('NOT IMPLEMENTED'));
-                break;
-            default:
-                console.error('Worker ' + this.uuid + ' has ' + chalk.red('unrecognized mode'));
-                break;
+                    await this.add_shipping_method()
+                        .catch(() => {
+                            throw new Error('Unable to add shipping method');
+                        });
+                    await this.get_cart_nonce()
+                        .catch(() => {
+                            throw new Error('Unable to get cart nonce');
+                        });
+                    await this.tokenize_cc_num()
+                        .catch(() => {
+                            throw new Error('Unable to tokenize cc');
+                        });
+                    await this.encrypt_cc_cvv()
+                        .catch(() => {
+                            throw new Error('Unable to encrypt cc and cvv');
+                        });
+                    await this.add_payment_method()
+                        .catch(() => {
+                            throw new Error('Unable to add payment method');
+                        });
+
+                    await this.submit_order()
+                        .catch(() => {
+                            throw new Error('Unable to submit order');
+                        });
+                    break;
+                case 2:
+                    console.log('Worker ' + this.uuid + ' running in ' + chalk.green('login release mode'));
+                    await this.login()
+                        .catch(() => {
+                            throw new Error('Unable to login');
+                        });
+                    await this.get_basket_id_for_user()
+                        .catch(() => {
+                            throw new Error('Unable to get basket id for user');
+                        });
+                    await this.add_email()
+                        .catch(() => {
+                            throw new Error('Unable to add email');
+                        });
+                    await this.add_shipping_address()
+                        .catch(() => {
+                            throw new Error('Unable to add shipping address');
+                        });
+                    await this.add_shipping_method()
+                        .catch(() => {
+                            throw new Error('Unable to add shipping method');
+                        });
+                    await this.get_cart_nonce()
+                        .catch(() => {
+                            throw new Error('Unable to get cart nonce');
+                        });
+                    await this.tokenize_cc_num()
+                        .catch(() => {
+                            throw new Error('Unable to tokenize cc number');
+                        });
+                    await this.encrypt_cc_cvv()
+                        .catch(() => {
+                            throw new Error('Unable to encrypt cc and cvv');
+                        });
+                    await this.add_payment_method()
+                        .catch(() => {
+                            throw new Error('Unable to add payment method');
+                        });
+                    await this.wait_for_drop()
+                        .catch(() => {
+                            throw new Error('Unable to wait for drop time');
+                        });
+                    await this.submit_order()
+                        .catch(() => {
+                            throw new Error('Unable to submit order')
+                        });
+                    break;
+                case 3:
+                    console.log('Worker ' + this.uuid + ' running in ' + chalk.green('restock mode'));
+                    console.error(chalk.red('NOT IMPLEMENTED'));
+                    break;
+                default:
+                    console.error('Worker ' + this.uuid + ' has ' + chalk.red('unrecognized mode'));
+                    break;
+            }
+        } catch (e) {
+            console.error(e.message)
         }
         console.timeEnd(this.uuid);
     }

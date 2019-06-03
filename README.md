@@ -29,11 +29,15 @@ Notes:
 * Make changes to the example file and then rename it as `profiles.js`
 * User/pass authenticated proxies are **not** supported, only IP authentication for now.
 * Shipping address == billing address.
+* Cards supported: `Visa` and `Master Card`. Amex coming later.
+* PerimeterX tokens last 10 minutes. I wouldnt start the bot more than 10 minutes out as if the token expires, it will take some time to replace.
+* Drop times are 24 hour, in the local timezone that the script is being ran.
+
 
 ### Modes
 
 1) **Mode 1**: Guest mode. This is the most vanilla usage of the bot. Adds to cart
-2) **Mode 2**: Login release mode. This is the most powerful option. Requires the shoes to be added to the cart via desktop and then login to account.
+2) **Mode 2**: Login release mode. This is the most powerful option. Requires the shoes to be added to the cart via desktop and then login to account on the bot.
 3) **Mode 3**: Restock mode. Similar to guest mode. This is in development.
 
 ### License

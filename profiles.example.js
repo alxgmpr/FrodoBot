@@ -1,6 +1,7 @@
 const profiles = [
     {
-        mode: 1,
+        mode: 2,
+        drop_time: 'Jun 2, 2019 09:00:00',
         proxy: 'localhost:8888',
 
         master_pid: 'M0991',
