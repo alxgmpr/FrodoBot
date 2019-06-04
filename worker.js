@@ -30,21 +30,21 @@ class Worker {
       if (console.log) {
         const old = console.log;
         console.log = function () {
-          Array.prototype.unshift.call(arguments, `${uuid} `);
+          Array.prototype.unshift.call(arguments, `[${uuid}] `);
           old.apply(this, arguments);
         };
       }
       if (console.warn) {
         const old = console.warn;
         console.warn = function () {
-          Array.prototype.unshift.call(arguments, `${uuid} `);
+          Array.prototype.unshift.call(arguments, `[${chalk.red(uuid)}] `);
           old.apply(this, arguments);
         };
       }
       if (console.error) {
         const old = console.error;
         console.error = function () {
-          Array.prototype.unshift.call(arguments, `${uuid} `);
+          Array.prototype.unshift.call(arguments, `[${chalk.red(uuid)}] `);
           old.apply(this, arguments);
         };
       }
