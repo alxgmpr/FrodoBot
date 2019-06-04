@@ -52,14 +52,14 @@ Notes:
 ### TODO List
 
 * Configuration validation/checking
-* Move some settings to global config file (headers, tls setting)
+* ~~Move some settings to global config file (headers, tls setting)~~
 * /lib /docs folder structure
 * Automatic token timers for cart nonce, px tokens, login jwt
 * Move px token generation into an external thread that only uses 1 pptr instance
 * Actually throw errors like a man
 * HTTP/2 support for Axios
 * Amex/Discover support (need to test cards, amex has diff length)
-* Add thread uuid to logging
+* ~~Add thread uuid to logging~~
 
 ### License
 
