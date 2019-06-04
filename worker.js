@@ -5,9 +5,10 @@ const puppeteer = require('puppeteer');
 const iPhone = puppeteer.devices['iPhone X'];
 const { TimeoutError } = require('puppeteer/Errors');
 const axios = require('axios');
-const httpsProxyAgent = require('https-proxy-agent');
+const HttpsProxyAgent = require('https-proxy-agent');
 const chalk = require('chalk');
 const uuidv4 = require('uuid/v4');
+const settings = require('./settings.js');
 
 require('console-stamp')(console, {
   pattern: 'HH:MM:ss.l',
@@ -26,64 +27,60 @@ class Worker {
   constructor(profile) {
     this.uuid = uuidv4();
 
-    (function (uuid) {
+    function addUuidToConsole(uuid) {
       if (console.log) {
         const old = console.log;
-        console.log = function () {
-          Array.prototype.unshift.call(arguments, `[${uuid}] `);
-          old.apply(this, arguments);
+        console.log = function log(...args) {
+          Array.prototype.unshift.call(args, `[${uuid}] `);
+          old.apply(this, args);
         };
       }
       if (console.warn) {
         const old = console.warn;
-        console.warn = function () {
-          Array.prototype.unshift.call(arguments, `[${chalk.red(uuid)}] `);
-          old.apply(this, arguments);
+        console.warn = function warn(...args) {
+          Array.prototype.unshift.call(args, `[${chalk.red(uuid)}] `);
+          old.apply(this, args);
         };
       }
       if (console.error) {
         const old = console.error;
-        console.error = function () {
-          Array.prototype.unshift.call(arguments, `[${chalk.red(uuid)}] `);
-          old.apply(this, arguments);
+        console.error = function error(...args) {
+          Array.prototype.unshift.call(args, `[${chalk.red(uuid)}] `);
+          old.apply(this, args);
         };
       }
-    }(this.uuid));
+    }
+    (addUuidToConsole(this.uuid));
 
     this.profile = profile;
 
-    this.mobile_user_agent = 'Hibbett/3.9.0 (com.hibbett.hibbett-sports; build:4558; iOS 12.2.0) Alamofire/4.5.1';
-
-    this.app_version = '3.9.0';
-    this.api_key = '0PutYAUfHz8ozEeqTFlF014LMJji6Rsc8bpRBGB0';
-
-    const axios_options = {
-      baseURL: 'https://hibbett-mobileapi.prolific.io/',
+    const axiosOptions = {
+      baseURL: settings.app_base_url,
       headers: {
-        'user-agent': this.mobile_user_agent,
+        'user-agent': settings.mobile_user_agent,
         'accept-language': 'en-US;q=1.0',
         'accept-encoding': 'gzip;q=1.0, compress;q=0.5',
         'content-type': 'application/json; charset=utf-8',
         accept: '*/*',
-        version: this.app_version,
-        platform: 'ios',
-        'x-api-key': this.api_key,
+        version: settings.app_version,
+        platform: settings.app_platform,
+        'x-api-key': settings.api_key,
       },
       withCredentials: true,
 
     };
 
     if (this.profile.proxy !== '' && this.profile.proxy) {
-      axios_options.httpsAgent = new httpsProxyAgent(`http://${this.profile.proxy}`);
+      axiosOptions.httpsAgent = new HttpsProxyAgent(`http://${this.profile.proxy}`);
     }
 
-    this.prolific_transport = axios.create(axios_options);
+    this.prolific_transport = axios.create(axiosOptions);
     // Custom error handling for 403 blocking and 5xx server downtime
     this.prolific_transport.interceptors.response.use(null, async (error) => {
       if (error.config && error.response && error.response.status === 403) {
-        console.error('PX block, updating token');
-        await this.get_new_px();
-        return await this.prolific_transport.request({
+        console.error('PX: Block, updating token');
+        await this.getNewPxToken();
+        return this.prolific_transport.request({
           method: error.config.method,
           url: error.config.url,
           params: error.config.params,
@@ -94,7 +91,7 @@ class Worker {
       // Server errors 5xx retry
       if (error.config && error.response && error.response.status >= 500) {
         console.error('5XX server error, repeating request');
-        return await this.prolific_transport.request({
+        return this.prolific_transport.request({
           method: error.config.method,
           url: error.config.url,
           params: error.config.params,
@@ -145,9 +142,9 @@ class Worker {
   }
 
   /*
-    get_new_px() - uses puppeteer to grab cookies via a headless browser
+    getNewPxToken() - uses puppeteer to grab cookies via a headless browser
      */
-  async get_new_px() {
+  async getNewPxToken() {
     // TODO: set a 10minute timer here to renew the auth key every now and then
     //  - potentially change the endpoint?
     //  - potentially change the timeout here
@@ -156,17 +153,16 @@ class Worker {
     try {
       console.log('PX: Starting');
 
-      const pptr_config = {
+      const pptrConfig = {
         headless: true,
         ignoreHTTPSErrors: true,
       };
 
       if (this.profile.proxy && this.profile.proxy !== '') {
-        pptr_config.args = [`--proxy-server=${this.profile.proxy}`];
+        pptrConfig.args = [`--proxy-server=${this.profile.proxy}`];
       }
 
-      const browser = await puppeteer.launch(pptr_config);
-      // console.log('PX: Preparing browser');
+      const browser = await puppeteer.launch(pptrConfig);
       const context = await browser.createIncognitoBrowserContext();
       const page = await context.newPage();
       await page.emulate(iPhone);
@@ -181,13 +177,12 @@ class Worker {
           if (e instanceof TimeoutError) {
             console.warn('PX: timeout, restarting');
             browser.close();
-            await this.get_new_px();
+            await this.getNewPxToken();
           }
         });
 
       // we probably get a 403 block by px so wait 10 sec and reload
       await page.waitFor(10000);
-
 
       await page.reload().then(async (response) => {
         const responseCode = await response.headers().status;
@@ -195,8 +190,7 @@ class Worker {
           console.log(chalk.green('PX: Final response code: 200'));
           try {
             this.cookies = await page.cookies();
-            this.prolific_transport.defaults.headers['x-px-authorization'] = `3:${
-              this.cookies.filter(cookie => cookie.name === '_px3')[0].value}`;
+            this.prolific_transport.defaults.headers['x-px-authorization'] = `3:${this.cookies.filter(cookie => cookie.name === '_px3')[0].value}`;
             await browser.close();
           } catch (e) {
             console.error(e);
@@ -207,7 +201,7 @@ class Worker {
             console.log('PX: Retrying with "longer" delay');
             // TODO: increase delay here
             await browser.close();
-            await this.get_new_px();
+            await this.getNewPxToken();
           }
         }
       });
@@ -216,7 +210,7 @@ class Worker {
     }
   }
 
-  async guest_login() {
+  async guestLogin() {
     console.log('Getting guest authorization');
     await this.prolific_transport.request({
       method: 'post',
@@ -263,8 +257,8 @@ class Worker {
   }
 
   /*
-    logout() - method to log out of a logged in account. note that this will invalidate the session so further requests
-    will need to be authenticated by login() or guest_login()
+    logout() - method to log out of a logged in account. note that this will invalidate the session
+    so further requests will need to be authenticated by login() or guestLogin()
      */
   async logout() {
     try {
@@ -285,7 +279,7 @@ class Worker {
     }
   }
 
-  async get_pids() {
+  async getPids() {
     console.log(`getting pids for ${this.master_pid}`);
     await this.prolific_transport.request({
       method: 'get',
@@ -301,7 +295,7 @@ class Worker {
       });
   }
 
-  async select_pid() {
+  async selectPid() {
     console.log(`Selecting sku based on target size ${this.target_size}`);
     if (!this.pids) {
       console.error('Cant select a size from empty list of pids');
@@ -318,7 +312,7 @@ class Worker {
     }
   }
 
-  async get_basket_id_for_user() {
+  async getBasketIdForUser() {
     if (!this.customer_id) {
       console.error('Cant find a basket id without customer id');
       return Promise.reject();
@@ -337,9 +331,10 @@ class Worker {
         console.error(e);
         return Promise.reject(e);
       });
+    return Promise.reject();
   }
 
-  async create_new_basket() {
+  async createNewBasket() {
     console.log('Creating a new basket');
     await this.prolific_transport.request({
       method: 'post',
@@ -354,9 +349,10 @@ class Worker {
         console.log(e);
         return Promise.reject(e);
       });
+    return Promise.reject();
   }
 
-  async add_to_cart() {
+  async addToCart() {
     if (!this.sel_pid || !this.basket_id) {
       console.error('Cant atc, missing pid or basket id');
       return Promise.reject();
@@ -388,9 +384,10 @@ class Worker {
         console.error(e);
         return Promise.reject(e);
       });
+    return Promise.reject();
   }
 
-  async get_cart_nonce() {
+  async getCartNonce() {
     if (!this.basket_id) {
       console.error('Cant get cart nonce for null basket id');
       return Promise.reject();
@@ -412,9 +409,10 @@ class Worker {
         console.error(e);
         return Promise.reject(e);
       });
+    return Promise.reject();
   }
 
-  async add_email() {
+  async addEmail() {
     console.log('Adding email');
     await this.prolific_transport.request({
       method: 'put',
@@ -433,7 +431,7 @@ class Worker {
       });
   }
 
-  async add_shipping_address() {
+  async addShippingAddress() {
     console.log('Adding shipping address');
     await this.prolific_transport.request({
       method: 'put',
@@ -464,7 +462,7 @@ class Worker {
       });
   }
 
-  async add_shipping_method() {
+  async addShippingMethod() {
     console.log('Adding shipping method');
     await this.prolific_transport.request({
       method: 'put',
@@ -485,7 +483,7 @@ class Worker {
       });
   }
 
-  async tokenize_cc_num() {
+  async tokenizeCcNum() {
     console.log('Tokenizing credit card number');
     await this.prolific_transport.request({
       method: 'post',
@@ -508,7 +506,7 @@ class Worker {
       });
   }
 
-  async encrypt_cc_cvv() {
+  async encryptCcCvv() {
     console.log('Encrypting credit card');
     await this.prolific_transport.request({
       method: 'post',
@@ -533,7 +531,7 @@ class Worker {
       });
   }
 
-  async add_payment_method() {
+  async addPaymentMethod() {
     console.log('Adding payment method');
     await this.prolific_transport.request({
       method: 'post',
@@ -545,9 +543,9 @@ class Worker {
         paymentObject: {
           nameOnCard: `${this.first_name} ${this.last_name}`,
           number: `************${this.cc_num.slice(12)}`,
-          expirationYear: parseInt(this.cc_exp_y),
+          expirationYear: parseInt(this.cc_exp_y, 10),
           cardType: this.cc_type,
-          expirationMonth: parseInt(this.cc_exp_m),
+          expirationMonth: parseInt(this.cc_exp_m, 10),
           creditCardToken: this.cc_token,
         },
       },
@@ -562,7 +560,7 @@ class Worker {
       });
   }
 
-  async submit_order() {
+  async submitOrder() {
     console.log('Submitting order');
     await this.prolific_transport.request({
       method: 'post',
@@ -591,12 +589,12 @@ class Worker {
       });
   }
 
-  async wait_for_drop() {
+  async waitForDrop() {
     console.log(`Waiting for drop time ${this.profile.drop_time}`);
-    const drop_time = new Date(this.profile.drop_time);
+    const dropTime = new Date(this.profile.drop_time);
     return new Promise((resolve) => {
       setInterval(() => {
-        const delta = drop_time.getTime() - new Date().getTime();
+        const delta = dropTime.getTime() - new Date().getTime();
         if (delta <= 0) {
           resolve();
         }
@@ -611,61 +609,59 @@ class Worker {
         case 1:
           // TODO: work on the order of therse methods in mode 1
           console.log(`Worker ${this.uuid} running in ${chalk.green('guest mode')}`);
-          await this.guest_login()
+          await this.guestLogin()
             .catch(() => {
               throw new Error('Unable to guest login');
             });
-          await this.create_new_basket()
+          await this.createNewBasket()
             .catch(() => {
               throw new Error('Unable to create new basket');
             });
-          await this.get_pids()
+          await this.getPids()
             .catch(() => {
               throw new Error('Unable to get pids');
             });
-          await this.select_pid()
+          await this.selectPid()
             .catch(() => {
               throw new Error('Unable to select pid');
             });
-          await this.add_email()
+          await this.addEmail()
             .catch(() => {
               throw new Error('Unable to add email');
             });
-          await this.add_shipping_address()
+          await this.addShippingAddress()
             .catch(() => {
               throw new Error('Unable to add shipping address');
             });
-          await this.wait_for_drop()
+          await this.waitForDrop()
             .catch(() => {
               throw new Error('Unable to wait for drop time');
             });
-          await this.add_to_cart()
+          await this.addToCart()
             .catch(() => {
               throw new Error('Unable to add to cart');
             });
-
-          await this.add_shipping_method()
+          await this.addShippingMethod()
             .catch(() => {
               throw new Error('Unable to add shipping method');
             });
-          await this.get_cart_nonce()
+          await this.getCartNonce()
             .catch(() => {
               throw new Error('Unable to get cart nonce');
             });
-          await this.tokenize_cc_num()
+          await this.tokenizeCcNum()
             .catch(() => {
               throw new Error('Unable to tokenize cc');
             });
-          await this.encrypt_cc_cvv()
+          await this.encryptCcCvv()
             .catch(() => {
               throw new Error('Unable to encrypt cc and cvv');
             });
-          await this.add_payment_method()
+          await this.addPaymentMethod()
             .catch(() => {
               throw new Error('Unable to add payment method');
             });
-
-          await this.submit_order()
+          await this.submitOrder()
             .catch(() => {
               throw new Error('Unable to submit order');
             });
@@ -676,43 +672,43 @@ class Worker {
             .catch(() => {
               throw new Error('Unable to login');
             });
-          await this.get_basket_id_for_user()
+          await this.getBasketIdForUser()
             .catch(() => {
               throw new Error('Unable to get basket id for user');
             });
-          await this.add_email()
+          await this.addEmail()
             .catch(() => {
               throw new Error('Unable to add email');
             });
-          await this.add_shipping_address()
+          await this.addShippingAddress()
             .catch(() => {
               throw new Error('Unable to add shipping address');
             });
-          await this.add_shipping_method()
+          await this.addShippingMethod()
             .catch(() => {
               throw new Error('Unable to add shipping method');
             });
-          await this.get_cart_nonce()
+          await this.getCartNonce()
             .catch(() => {
               throw new Error('Unable to get cart nonce');
             });
-          await this.tokenize_cc_num()
+          await this.tokenizeCcNum()
             .catch(() => {
               throw new Error('Unable to tokenize cc number');
             });
-          await this.encrypt_cc_cvv()
+          await this.encryptCcCvv()
             .catch(() => {
               throw new Error('Unable to encrypt cc and cvv');
             });
-          await this.add_payment_method()
+          await this.addPaymentMethod()
             .catch(() => {
               throw new Error('Unable to add payment method');
             });
-          await this.wait_for_drop()
+          await this.waitForDrop()
             .catch(() => {
               throw new Error('Unable to wait for drop time');
             });
-          await this.submit_order()
+          await this.submitOrder()
             .catch(() => {
               throw new Error('Unable to submit order');
             });
