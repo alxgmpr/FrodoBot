@@ -16,7 +16,7 @@ require('console-stamp')(console, {
   },
 });
 
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1';
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 // TODO: write env check to turn on and off tls reject
 //  - better error handling function for requests (403, 429, 5XX)
@@ -25,6 +25,31 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1';
 class Worker {
   constructor(profile) {
     this.uuid = uuidv4();
+
+    (function (uuid) {
+      if (console.log) {
+        const old = console.log;
+        console.log = function () {
+          Array.prototype.unshift.call(arguments, `${uuid} `);
+          old.apply(this, arguments);
+        };
+      }
+      if (console.warn) {
+        const old = console.warn;
+        console.warn = function () {
+          Array.prototype.unshift.call(arguments, `${uuid} `);
+          old.apply(this, arguments);
+        };
+      }
+      if (console.error) {
+        const old = console.error;
+        console.error = function () {
+          Array.prototype.unshift.call(arguments, `${uuid} `);
+          old.apply(this, arguments);
+        };
+      }
+    }(this.uuid));
+
     this.profile = profile;
 
     this.mobile_user_agent = 'Hibbett/3.9.0 (com.hibbett.hibbett-sports; build:4558; iOS 12.2.0) Alamofire/4.5.1';

@@ -15,6 +15,13 @@ Uses Puppeteer and Axios to complete autocheckout against Hibbett Sports' mobile
 
 `npm start`
 
+### Known Issues
+
+* This solution is very memory heavy
+* Each thread that you spawn will run a chrome instance momentarily to combat PX blocking. Dont blow up your machine.
+* There is very little validation/error handling here. 4XX errors will crash a thread, 5XX errors will get repeated mercilessly
+
+
 
 ### Task Setup
 
@@ -37,9 +44,22 @@ Notes:
 
 ### Modes
 
-1) **Mode 1**: Guest mode. This is the most vanilla usage of the bot. Adds to cart
+1) **Mode 1**: Guest mode. This is the most vanilla usage of the bot. Adds to cart like a normal person would, start to finish.
 2) **Mode 2**: Login release mode. This is the most powerful option. Requires the shoes to be added to the cart via desktop and then login to account on the bot.
 3) **Mode 3**: Restock mode. Similar to guest mode. This is in development.
+
+
+### TODO List
+
+* Configuration validation/checking
+* Move some settings to global config file (headers, tls setting)
+* /lib /docs folder structure
+* Automatic token timers for cart nonce, px tokens, login jwt
+* Move px token generation into an external thread that only uses 1 pptr instance
+* Actually throw errors like a man
+* HTTP/2 support for Axios
+* Amex/Discover support (need to test cards, amex has diff length)
+* Add thread uuid to logging
 
 ### License
 
