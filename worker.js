@@ -1,5 +1,3 @@
-
-
 const puppeteer = require('puppeteer');
 
 const iPhone = puppeteer.devices['iPhone X'];
@@ -19,38 +17,9 @@ require('console-stamp')(console, {
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-// TODO: write env check to turn on and off tls reject
-//  - better error handling function for requests (403, 429, 5XX)
-//  - import constants from external file
-
 class Worker {
   constructor(profile) {
-    this.uuid = uuidv4();
-
-    function addUuidToConsole(uuid) {
-      if (console.log) {
-        const old = console.log;
-        console.log = function log(...args) {
-          Array.prototype.unshift.call(args, `[${uuid}] `);
-          old.apply(this, args);
-        };
-      }
-      if (console.warn) {
-        const old = console.warn;
-        console.warn = function warn(...args) {
-          Array.prototype.unshift.call(args, `[${chalk.red(uuid)}] `);
-          old.apply(this, args);
-        };
-      }
-      if (console.error) {
-        const old = console.error;
-        console.error = function error(...args) {
-          Array.prototype.unshift.call(args, `[${chalk.red(uuid)}] `);
-          old.apply(this, args);
-        };
-      }
-    }
-    (addUuidToConsole(this.uuid));
+    this.uuid = Buffer.from(uuidv4().slice(0, 8)).toString('base64');
 
     this.profile = profile;
 
@@ -90,7 +59,22 @@ class Worker {
       }
       // Server errors 5xx retry
       if (error.config && error.response && error.response.status >= 500) {
-        console.error('5XX server error, repeating request');
+        console.error(`${error.repsonse.status} server error, repeating request`);
+        return this.prolific_transport.request({
+          method: error.config.method,
+          url: error.config.url,
+          params: error.config.params,
+          withCredentials: true,
+        });
+      }
+      // Authentication has expired
+      if (error.config && error.response && error.response.status === 401) {
+        console.error('401 Invalid session, updating auth');
+        if (this.profile.password && this.profile.password !== '') {
+          await this.login();
+        } else {
+          await this.guestLogin();
+        }
         return this.prolific_transport.request({
           method: error.config.method,
           url: error.config.url,
@@ -141,6 +125,22 @@ class Worker {
     this.sel_pid = null;
   }
 
+  log(text) {
+    return console.log(`[${this.uuid}] ${text}`);
+  }
+
+  debug(text) {
+    return console.debug(`[${chalk.magenta(this.uuid)}] ${text}`);
+  }
+
+  warn(text) {
+    return console.warn(`[${chalk.yellow(this.uuid)}] ${text}`);
+  }
+
+  error(text) {
+    return console.error(`[${chalk.red(this.uuid)}] ${text}`);
+  }
+
   /*
     getNewPxToken() - uses puppeteer to grab cookies via a headless browser
      */
@@ -151,7 +151,7 @@ class Worker {
     //  - add mouse movement/activity
     //  - add page scroll movement/activity
     try {
-      console.log('PX: Starting');
+      this.log('PX: Starting');
 
       const pptrConfig = {
         headless: true,
@@ -171,11 +171,11 @@ class Worker {
       // load the page
       await page.goto('https://hibbett-mobileapi.prolific.io/ecommerce/shopview')
         .then(async (response) => {
-          console.log(`PX: Initial response code: ${await response.headers().status}`);
+          this.log(`PX: Initial response code: ${await response.headers().status}`);
         })
         .catch(async (e) => {
           if (e instanceof TimeoutError) {
-            console.warn('PX: timeout, restarting');
+            this.warn('PX: timeout, restarting');
             browser.close();
             await this.getNewPxToken();
           }
@@ -187,18 +187,18 @@ class Worker {
       await page.reload().then(async (response) => {
         const responseCode = await response.headers().status;
         if (responseCode === '200') {
-          console.log(chalk.green('PX: Final response code: 200'));
+          this.log(chalk.green('PX: Final response code: 200'));
           try {
             this.cookies = await page.cookies();
             this.prolific_transport.defaults.headers['x-px-authorization'] = `3:${this.cookies.filter(cookie => cookie.name === '_px3')[0].value}`;
             await browser.close();
           } catch (e) {
-            console.error(e);
+            this.error(e);
           }
         } else {
-          console.error(`PX: Failed to get a good 200 status code after 10sec reload: ${responseCode}`);
+          this.error(`PX: Failed to get a good 200 status code after 10sec reload: ${responseCode}`);
           if (responseCode === 403) {
-            console.log('PX: Retrying with "longer" delay');
+            this.log('PX: Retrying with "longer" delay');
             // TODO: increase delay here
             await browser.close();
             await this.getNewPxToken();
@@ -206,30 +206,30 @@ class Worker {
         }
       });
     } catch (e) {
-      console.error(e);
+      this.error(e);
     }
   }
 
   async guestLogin() {
-    console.log('Getting guest authorization');
+    this.log('Getting guest authorization');
     await this.prolific_transport.request({
       method: 'post',
       url: '/users/guest',
     })
       .then((res) => {
-        console.log('Setting guest authorization header');
+        this.log('Setting guest authorization header');
         this.session_id = res.data.sessionId;
         this.prolific_transport.defaults.headers.authorization = `Bearer ${res.data.sessionId}`;
         return Promise.resolve(this.session_id);
       })
       .catch((e) => {
-        console.error(e);
+        this.error(e);
         return Promise.reject(e);
       });
   }
 
   async login() {
-    console.log(`Logging into account ${chalk.cyan(this.email)}`);
+    this.log(`Logging into account ${chalk.cyan(this.email)}`);
     await this.prolific_transport.request({
       method: 'post',
       url: '/users/login',
@@ -239,19 +239,19 @@ class Worker {
       },
     })
       .then((res) => {
-        console.log('Setting user authorization header');
+        this.log('Setting user authorization header');
         this.session_id = res.data.sessionId;
         this.prolific_transport.defaults.headers.authorization = `Bearer ${res.data.sessionId}`;
-        console.log(`Setting customer id ${res.data.customerId}`);
+        this.log(`Setting customer id ${res.data.customerId}`);
         this.customer_id = res.data.customerId;
         return Promise.resolve();
       })
       .catch((e) => {
         if (e.response && e.response.status === 401) {
-          console.error('Bad login');
+          this.error('Bad login');
           return Promise.reject();
         }
-        console.error(e);
+        this.error(e);
         return Promise.reject();
       });
   }
@@ -262,25 +262,25 @@ class Worker {
      */
   async logout() {
     try {
-      console.log('Logging out');
+      this.log('Logging out');
       const response = await this.prolific_transport.request({
         method: 'delete',
         url: '/users/logout',
       });
       if (response.data.success === true) {
-        console.log('Successfully logged out');
+        this.log('Successfully logged out');
         return Promise.resolve();
       }
-      console.log('Logout response unsuccessful');
+      this.log('Logout response unsuccessful');
       return Promise.reject();
     } catch (e) {
-      console.error(e);
+      this.error(e);
       return Promise.reject(e);
     }
   }
 
   async getPids() {
-    console.log(`getting pids for ${this.master_pid}`);
+    this.log(`getting pids for ${this.master_pid}`);
     await this.prolific_transport.request({
       method: 'get',
       url: `/ecommerce/products/${this.master_pid}`,
@@ -290,63 +290,62 @@ class Worker {
         return Promise.resolve(this.pids);
       })
       .catch((e) => {
-        console.error(e);
+        this.error(e);
         return Promise.reject(e);
       });
   }
 
   async selectPid() {
-    console.log(`Selecting sku based on target size ${this.target_size}`);
+    this.log(`Selecting sku based on target size ${this.target_size}`);
     if (!this.pids) {
-      console.error('Cant select a size from empty list of pids');
+      this.error('Cant select a size from empty list of pids');
       return Promise.reject();
     }
     try {
       const selected = this.pids.filter(pid => pid.size === this.target_size)[0];
       this.sel_pid = selected.id;
-      console.log(`Selected ${selected.id} for size ${this.target_size}`);
+      this.log(`Selected ${selected.id} for size ${this.target_size}`);
       return Promise.resolve(selected);
     } catch (e) {
-      console.error(e);
+      this.error(e);
       return Promise.reject();
     }
   }
 
   async getBasketIdForUser() {
     if (!this.customer_id) {
-      console.error('Cant find a basket id without customer id');
+      this.error('Cant find a basket id without customer id');
       return Promise.reject();
     }
-    console.log('Finding existing basket for user');
+    this.log('Finding existing basket for user');
     await this.prolific_transport.request({
       method: 'get',
       url: `users/${this.customer_id}/basketId`,
     })
       .then((res) => {
-        console.log(`Found existing basket id ${res.data.basketId}`);
+        this.log(`Found existing basket id ${res.data.basketId}`);
         this.basket_id = res.data.basketId;
-        return Promise.resolve(this.basket_id);
       })
       .catch((e) => {
-        console.error(e);
+        this.error(e);
         return Promise.reject(e);
       });
-    return Promise.reject();
+    return Promise.resolve(this.basket_id);
   }
 
   async createNewBasket() {
-    console.log('Creating a new basket');
+    this.log('Creating a new basket');
     await this.prolific_transport.request({
       method: 'post',
       url: '/ecommerce/cart/create',
     })
       .then((res) => {
         this.basket_id = res.data.basketId;
-        console.log(`Got a new basket id ${this.basket_id}`);
+        this.log(`Got a new basket id ${this.basket_id}`);
         return Promise.resolve(this.basket_id);
       })
       .catch((e) => {
-        console.log(e);
+        this.log(e);
         return Promise.reject(e);
       });
     return Promise.reject();
@@ -354,10 +353,10 @@ class Worker {
 
   async addToCart() {
     if (!this.sel_pid || !this.basket_id) {
-      console.error('Cant atc, missing pid or basket id');
+      this.error('Cant atc, missing pid or basket id');
       return Promise.reject();
     }
-    console.log('Adding to cart');
+    this.log('Adding to cart');
     await this.prolific_transport.request({
       method: 'post',
       url: `/ecommerce/cart/${this.basket_id}/items`,
@@ -376,12 +375,12 @@ class Worker {
       },
     })
       .then((res) => {
-        console.log(`Added ${this.sel_pid} to cart`);
+        this.log(`Added ${this.sel_pid} to cart`);
         this.product_id = res.data.cartItems[0].id;
         return Promise.resolve(this.product_id);
       })
       .catch((e) => {
-        console.error(e);
+        this.error(e);
         return Promise.reject(e);
       });
     return Promise.reject();
@@ -389,10 +388,10 @@ class Worker {
 
   async getCartNonce() {
     if (!this.basket_id) {
-      console.error('Cant get cart nonce for null basket id');
+      this.error('Cant get cart nonce for null basket id');
       return Promise.reject();
     }
-    console.log('Getting cart nonce');
+    this.log('Getting cart nonce');
     await this.prolific_transport.request({
       method: 'get',
       url: `/ecommerce/cart/${this.basket_id}/viewBag`,
@@ -401,19 +400,18 @@ class Worker {
       },
     })
       .then((res) => {
-        console.log('Got cart nonce');
+        this.log('Got cart nonce');
         this.basket_nonce = res.data.nonce;
-        return Promise.resolve(this.basket_nonce);
       })
       .catch((e) => {
-        console.error(e);
+        this.error(e);
         return Promise.reject(e);
       });
-    return Promise.reject();
+    return Promise.resolve(this.basket_nonce);
   }
 
   async addEmail() {
-    console.log('Adding email');
+    this.log('Adding email');
     await this.prolific_transport.request({
       method: 'put',
       url: `/ecommerce/cart/${this.basket_id}/customer`,
@@ -422,17 +420,17 @@ class Worker {
       },
     })
       .then(() => {
-        console.log('Successfully added email');
+        this.log('Successfully added email');
         return Promise.resolve();
       })
       .catch((e) => {
-        console.error(e);
+        this.error(e);
         Promise.reject(e);
       });
   }
 
   async addShippingAddress() {
-    console.log('Adding shipping address');
+    this.log('Adding shipping address');
     await this.prolific_transport.request({
       method: 'put',
       url: `/ecommerce/cart/${this.basket_id}/shipments/me/shipping_address`,
@@ -453,17 +451,17 @@ class Worker {
       },
     })
       .then(() => {
-        console.log('Successfully added shipping address');
+        this.log('Successfully added shipping address');
         return Promise.resolve();
       })
       .catch((e) => {
-        console.error(e);
+        this.error(e);
         return Promise.reject(e);
       });
   }
 
   async addShippingMethod() {
-    console.log('Adding shipping method');
+    this.log('Adding shipping method');
     await this.prolific_transport.request({
       method: 'put',
       url: `/ecommerce/cart/${this.basket_id}/shipments/me/shipping_options`,
@@ -472,19 +470,19 @@ class Worker {
       },
     })
       .then((res) => {
-        console.log('Successfully added shipping method');
+        this.log('Successfully added shipping method');
         this.basket_total = res.data.total;
-        console.log(`Cart total $${this.basket_total}`);
+        this.log(`Cart total $${this.basket_total}`);
         return Promise.resolve(this.basket_total);
       })
       .catch((e) => {
-        console.error(e);
+        this.error(e);
         return Promise.reject(e);
       });
   }
 
   async tokenizeCcNum() {
-    console.log('Tokenizing credit card number');
+    this.log('Tokenizing credit card number');
     await this.prolific_transport.request({
       method: 'post',
       url: 'https://hostedpayments.radial.com/hosted-payments/pan/tokenize',
@@ -496,18 +494,18 @@ class Worker {
       },
     })
       .then((res) => {
-        console.log('Successfully tokenized cc number');
+        this.log('Successfully tokenized cc number');
         this.cc_token = res.data.account_token;
         return Promise.resolve(this.cc_token);
       })
       .catch((e) => {
-        console.error(e);
+        this.error(e);
         return Promise.reject(e);
       });
   }
 
   async encryptCcCvv() {
-    console.log('Encrypting credit card');
+    this.log('Encrypting credit card');
     await this.prolific_transport.request({
       method: 'post',
       url: 'https://hostedpayments.radial.com/hosted-payments/encrypt/pancsc',
@@ -520,19 +518,19 @@ class Worker {
       },
     })
       .then((res) => {
-        console.log('Successfully encrypted credit card');
+        this.log('Successfully encrypted credit card');
         this.encrypted_cc = res.data.encryptedPaymentAccountNumber;
         this.encrypted_cvv = res.data.encryptedCardSecurityCode;
         return Promise.resolve(this.encrypted_cvv);
       })
       .catch((e) => {
-        console.error(e);
+        this.error(e);
         return Promise.reject(e);
       });
   }
 
   async addPaymentMethod() {
-    console.log('Adding payment method');
+    this.log('Adding payment method');
     await this.prolific_transport.request({
       method: 'post',
       url: `/ecommerce/cart/${this.basket_id}/payment_methods`,
@@ -551,17 +549,17 @@ class Worker {
       },
     })
       .then(() => {
-        console.log('Successfully added payment method');
+        this.log('Successfully added payment method');
         return Promise.resolve();
       })
       .catch((e) => {
-        console.error(e);
+        this.error(e);
         return Promise.reject(e);
       });
   }
 
   async submitOrder() {
-    console.log('Submitting order');
+    this.log('Submitting order');
     await this.prolific_transport.request({
       method: 'post',
       url: `/ecommerce/cart/${this.basket_id}/place_order`,
@@ -573,16 +571,16 @@ class Worker {
       },
     })
       .then((res) => {
-        console.log('Submitted order');
-        console.log(res.data);
+        this.log('Submitted order');
+        this.log(res.data);
         return Promise.resolve();
       })
       .catch((e) => {
         if (e.response) {
           if (e.response.status === 400) {
-            console.error('Card declined');
+            this.error('Card declined');
           } else {
-            console.error(e);
+            this.error(e);
           }
         }
         return Promise.reject(e);
@@ -590,7 +588,7 @@ class Worker {
   }
 
   async waitForDrop() {
-    console.log(`Waiting for drop time ${this.profile.drop_time}`);
+    this.log(`Waiting for drop time ${this.profile.drop_time}`);
     const dropTime = new Date(this.profile.drop_time);
     return new Promise((resolve) => {
       setInterval(() => {
@@ -603,12 +601,12 @@ class Worker {
   }
 
   async run() {
-    console.time(this.uuid);
+    console.time(`[${this.uuid}] `);
     try {
       switch (this.mode) {
         case 1:
           // TODO: work on the order of therse methods in mode 1
-          console.log(`Worker ${this.uuid} running in ${chalk.green('guest mode')}`);
+          this.log(`Worker ${this.uuid} running in ${chalk.green('guest mode')}`);
           await this.guestLogin()
             .catch(() => {
               throw new Error('Unable to guest login');
@@ -667,7 +665,7 @@ class Worker {
             });
           break;
         case 2:
-          console.log(`Worker ${this.uuid} running in ${chalk.green('login release mode')}`);
+          this.log(`Worker ${this.uuid} running in ${chalk.green('login release mode')}`);
           await this.login()
             .catch(() => {
               throw new Error('Unable to login');
@@ -714,17 +712,17 @@ class Worker {
             });
           break;
         case 3:
-          console.log(`Worker ${this.uuid} running in ${chalk.green('restock mode')}`);
-          console.error(chalk.red('NOT IMPLEMENTED'));
+          this.log(`Worker ${this.uuid} running in ${chalk.green('restock mode')}`);
+          this.error(chalk.red('NOT IMPLEMENTED'));
           break;
         default:
-          console.error(`Worker ${this.uuid} has ${chalk.red('unrecognized mode')}`);
+          this.error(`Worker ${this.uuid} has ${chalk.red('unrecognized mode')}`);
           break;
       }
     } catch (e) {
-      console.error(e.message);
+      this.error(e.message);
     }
-    console.timeEnd(this.uuid);
+    console.timeEnd(`[${this.uuid}] `);
   }
 }
 
