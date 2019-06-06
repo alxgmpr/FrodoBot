@@ -19,7 +19,7 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 class Worker {
   constructor(profile) {
-    this.uuid = Buffer.from(uuidv4().slice(0, 8)).toString('base64');
+    this.uuid = Buffer.from(uuidv4().replace(/-/g, '').slice(0, 8)).toString('base64');
 
     this.profile = profile;
 
@@ -47,7 +47,11 @@ class Worker {
     // Custom error handling for 403 blocking and 5xx server downtime
     this.prolific_transport.interceptors.response.use(null, async (error) => {
       if (error.config && error.response && error.response.status === 403) {
-        console.error('PX: Block, updating token');
+        if (this.times_px_requested > 10) {
+          this.error('PX: Requested more than 10 times, exiting request');
+          return Promise.reject();
+        }
+        this.error('PX: Block, updating token');
         await this.getNewPxToken();
         return this.prolific_transport.request({
           method: error.config.method,
@@ -59,7 +63,7 @@ class Worker {
       }
       // Server errors 5xx retry
       if (error.config && error.response && error.response.status >= 500) {
-        console.error(`${error.repsonse.status} server error, repeating request`);
+        this.error(`${error.repsonse.status} server error, repeating request`);
         return this.prolific_transport.request({
           method: error.config.method,
           url: error.config.url,
@@ -69,7 +73,7 @@ class Worker {
       }
       // Authentication has expired
       if (error.config && error.response && error.response.status === 401) {
-        console.error('401 Invalid session, updating auth');
+        this.error('401 Invalid session, updating auth');
         if (this.profile.password && this.profile.password !== '') {
           await this.login();
         } else {
@@ -123,6 +127,8 @@ class Worker {
     this.cookies = [];
     this.pids = [];
     this.sel_pid = null;
+
+    this.times_px_requested = 0;
   }
 
   log(text) {
@@ -159,12 +165,22 @@ class Worker {
       };
 
       if (this.profile.proxy && this.profile.proxy !== '') {
-        pptrConfig.args = [`--proxy-server=${this.profile.proxy}`];
+        if (this.profile.proxy.indexOf('@') === -1) {
+          pptrConfig.args = [`--proxy-server=${this.profile.proxy}`];
+        } else {
+          pptrConfig.args = [`--proxy-server=${this.profile.proxy.split('@')[1]}`];
+        }
       }
 
       const browser = await puppeteer.launch(pptrConfig);
       const context = await browser.createIncognitoBrowserContext();
       const page = await context.newPage();
+      if (this.profile.proxy.indexOf('@') !== -1) {
+        await page.authenticate({
+          username: this.profile.proxy.split(':')[0],
+          password: this.profile.proxy.split(':')[1].split('@')[0],
+        });
+      }
       await page.emulate(iPhone);
       await page.setJavaScriptEnabled(true);
 
@@ -571,8 +587,7 @@ class Worker {
       },
     })
       .then((res) => {
-        this.log('Submitted order');
-        this.log(res.data);
+        this.log(chalk.green(`Submitted order ${res.data.id}`));
         return Promise.resolve();
       })
       .catch((e) => {
@@ -674,42 +689,42 @@ class Worker {
             .catch(() => {
               throw new Error('Unable to get basket id for user');
             });
-          await this.addEmail()
-            .catch(() => {
-              throw new Error('Unable to add email');
-            });
-          await this.addShippingAddress()
-            .catch(() => {
-              throw new Error('Unable to add shipping address');
-            });
-          await this.addShippingMethod()
-            .catch(() => {
-              throw new Error('Unable to add shipping method');
-            });
-          await this.getCartNonce()
-            .catch(() => {
-              throw new Error('Unable to get cart nonce');
-            });
-          await this.tokenizeCcNum()
-            .catch(() => {
-              throw new Error('Unable to tokenize cc number');
-            });
-          await this.encryptCcCvv()
-            .catch(() => {
-              throw new Error('Unable to encrypt cc and cvv');
-            });
-          await this.addPaymentMethod()
-            .catch(() => {
-              throw new Error('Unable to add payment method');
-            });
-          await this.waitForDrop()
-            .catch(() => {
-              throw new Error('Unable to wait for drop time');
-            });
-          await this.submitOrder()
-            .catch(() => {
-              throw new Error('Unable to submit order');
-            });
+          // await this.addEmail()
+          //   .catch(() => {
+          //     throw new Error('Unable to add email');
+          //   });
+          // await this.addShippingAddress()
+          //   .catch(() => {
+          //     throw new Error('Unable to add shipping address');
+          //   });
+          // await this.addShippingMethod()
+          //   .catch(() => {
+          //     throw new Error('Unable to add shipping method');
+          //   });
+          // await this.getCartNonce()
+          //   .catch(() => {
+          //     throw new Error('Unable to get cart nonce');
+          //   });
+          // await this.tokenizeCcNum()
+          //   .catch(() => {
+          //     throw new Error('Unable to tokenize cc number');
+          //   });
+          // await this.encryptCcCvv()
+          //   .catch(() => {
+          //     throw new Error('Unable to encrypt cc and cvv');
+          //   });
+          // await this.addPaymentMethod()
+          //   .catch(() => {
+          //     throw new Error('Unable to add payment method');
+          //   });
+          // await this.waitForDrop()
+          //   .catch(() => {
+          //     throw new Error('Unable to wait for drop time');
+          //   });
+          // await this.submitOrder()
+          //   .catch(() => {
+          //     throw new Error('Unable to submit order');
+          //   });
           break;
         case 3:
           this.log(`Worker ${this.uuid} running in ${chalk.green('restock mode')}`);
@@ -723,6 +738,7 @@ class Worker {
       this.error(e.message);
     }
     console.timeEnd(`[${this.uuid}] `);
+    return Promise.resolve();
   }
 }
 

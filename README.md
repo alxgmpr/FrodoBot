@@ -34,7 +34,6 @@ Notes:
 * Phone numbers should be a string of numbers, no dashes or spaces
 * Ensure that credit card expiration has no preceeding zeros (e.g. 5 instead of 05)
 * Make changes to the example file and then rename it as `profiles.js`
-* User/pass authenticated proxies are **not** supported, only IP authentication for now.
 * Shipping address == billing address.
 * Cards supported: `Visa` and `Master Card`. Amex coming later.
 * PerimeterX tokens last 10 minutes. I wouldnt start the bot more than 10 minutes out as if the token expires, it will take some time to replace.
