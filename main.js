@@ -2,8 +2,12 @@ const Worker = require('./worker.js');
 const profiles = require('./profiles.js');
 
 const workers = [];
-profiles.forEach((profile) => {
-  const w = new Worker(profile);
-  w.run();
-  workers.push(w);
-});
+let counter = 0;
+setInterval(() => {
+  if (counter < profiles.length) {
+    const w = new Worker(profiles[counter]);
+    w.run();
+    workers.push(w);
+    counter += 1;
+  }
+}, 5000);
