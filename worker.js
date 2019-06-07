@@ -689,42 +689,42 @@ class Worker {
             .catch(() => {
               throw new Error('Unable to get basket id for user');
             });
-          // await this.addEmail()
-          //   .catch(() => {
-          //     throw new Error('Unable to add email');
-          //   });
-          // await this.addShippingAddress()
-          //   .catch(() => {
-          //     throw new Error('Unable to add shipping address');
-          //   });
-          // await this.addShippingMethod()
-          //   .catch(() => {
-          //     throw new Error('Unable to add shipping method');
-          //   });
-          // await this.getCartNonce()
-          //   .catch(() => {
-          //     throw new Error('Unable to get cart nonce');
-          //   });
-          // await this.tokenizeCcNum()
-          //   .catch(() => {
-          //     throw new Error('Unable to tokenize cc number');
-          //   });
-          // await this.encryptCcCvv()
-          //   .catch(() => {
-          //     throw new Error('Unable to encrypt cc and cvv');
-          //   });
-          // await this.addPaymentMethod()
-          //   .catch(() => {
-          //     throw new Error('Unable to add payment method');
-          //   });
-          // await this.waitForDrop()
-          //   .catch(() => {
-          //     throw new Error('Unable to wait for drop time');
-          //   });
-          // await this.submitOrder()
-          //   .catch(() => {
-          //     throw new Error('Unable to submit order');
-          //   });
+          await this.addEmail()
+            .catch(() => {
+              throw new Error('Unable to add email');
+            });
+          await this.addShippingAddress()
+            .catch(() => {
+              throw new Error('Unable to add shipping address');
+            });
+          await this.addShippingMethod()
+            .catch(() => {
+              throw new Error('Unable to add shipping method');
+            });
+          await this.getCartNonce()
+            .catch(() => {
+              throw new Error('Unable to get cart nonce');
+            });
+          await this.tokenizeCcNum()
+            .catch(() => {
+              throw new Error('Unable to tokenize cc number');
+            });
+          await this.encryptCcCvv()
+            .catch(() => {
+              throw new Error('Unable to encrypt cc and cvv');
+            });
+          await this.addPaymentMethod()
+            .catch(() => {
+              throw new Error('Unable to add payment method');
+            });
+          await this.waitForDrop()
+            .catch(() => {
+              throw new Error('Unable to wait for drop time');
+            });
+          await this.submitOrder()
+            .catch(() => {
+              throw new Error('Unable to submit order');
+            });
           break;
         case 3:
           this.log(`Worker ${this.uuid} running in ${chalk.green('restock mode')}`);
