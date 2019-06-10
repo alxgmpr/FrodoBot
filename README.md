@@ -59,6 +59,7 @@ Notes:
 * HTTP/2 support for Axios
 * Amex/Discover support (need to test cards, amex has diff length)
 * ~~Add thread uuid to logging~~
+* Add support for USER:PASS:IP:PORT style proxies (fit to USER:PASS@IP:PORT)
 
 ### License
 
