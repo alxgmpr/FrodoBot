@@ -10,4 +10,4 @@ setInterval(() => {
     workers.push(w);
     counter += 1;
   }
-}, 5000);
+}, 1000);
