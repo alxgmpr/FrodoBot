@@ -19,6 +19,11 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 class Worker {
   constructor(profile) {
+    // no need to have TLS off unless were working with Charles
+    if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0' && profile.proxy !== 'localhost:8888') {
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1';
+    }
+
     this.uuid = Buffer.from(uuidv4().replace(/-/g, '').slice(0, 8)).toString('base64');
 
     this.profile = profile;
@@ -145,6 +150,16 @@ class Worker {
 
   error(text) {
     return console.error(`[${chalk.red(this.uuid)}] ${text}`);
+  }
+
+  async checkProfile() {
+    const profileWithoutApt = this.profile;
+    delete profileWithoutApt.address2; // we allow for empty apartment field
+    const isProfileTruthy = Object.keys(profileWithoutApt).every(k => profileWithoutApt[k]);
+    if (isProfileTruthy) {
+      return Promise.resolve();
+    }
+    return Promise.reject(new Error('Profile is missing something'));
   }
 
   /*
@@ -593,7 +608,9 @@ class Worker {
       .catch((e) => {
         if (e.response) {
           if (e.response.status === 400) {
-            this.error('Card declined');
+            if (e.response.data) {
+              this.error(e.response.data.message);
+            }
           } else {
             this.error(e);
           }
@@ -681,6 +698,10 @@ class Worker {
           break;
         case 2:
           this.log(`Worker ${this.uuid} running in ${chalk.green('login release mode')}`);
+          await this.checkProfile()
+            .catch((e) => {
+              throw e;
+            });
           await this.login()
             .catch(() => {
               throw new Error('Unable to login');
